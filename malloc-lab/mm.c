@@ -24,6 +24,7 @@ static void *find_fit(size_t asize);
 static void place(void *bp, size_t asize);
 
 static char *heap_listp = NULL;
+static char *last_fit;
 
 /*********************************************************
  * NOTE TO STUDENTS: Before you do anything else, please
@@ -82,6 +83,7 @@ team_t team = {
 int mm_init(void)
 // 힙영역 만들기
 {
+    last_fit = heap_listp;
     if ((heap_listp = mem_sbrk(4*WSIZE)) == (void *)-1){
     // 만약 heap_listp가 실패한다면
         return -1;
@@ -267,19 +269,78 @@ static void *find_fit(size_t asize){
     //맞는 공간을 못찾으면 리턴 NULL
 }
 
-void *mm_realloc(void *ptr, size_t size)
-{
-    void *oldptr = ptr;
+void *mm_realloc(void *ptr, size_t size){
     void *newptr;
+    // 새로 할당 받은 블럭 포인터
     size_t copySize;
+    // 복사할 블록 Payload 사이즈
+    size_t oldsize;
+    // 기존 블록의 전체 사이즈
+    size_t asize;
+    // 사용자가 요청한 사이즈 + 메타데이터 + 정렬 (최종 할당 크기)
+
+    if(ptr == NULL){
+        // 만약 포인터 값이 NULL 이면
+        return mm_malloc(size);
+        // 그냥 말록을 만들어서 리턴
+    }
+    if(size == 0){
+        // 사용자가 요청한 사이즈가 0이라면
+        mm_free(ptr);
+        // 현재 블럭을 free로변경
+        return NULL;
+        //리턴 NULL
+    }
+
+    oldsize = GET_SIZE(HDRP(ptr));
+    // 기존 전체 블록사이즈
+    if(size <= DSIZE){
+        //사용자가 요청한 사이즈가 16바이트보다 작으면
+        asize = 2*DSIZE;
+        // 16바이트 할당하기
+    }else{
+        //사용자가 요청한 사이즈가 16바이트 보다 크면
+        asize = DSIZE * ((size + (DSIZE) + (DSIZE -1))/ DSIZE);
+        // 전체 사이즈를 메타데이터와 패딩공간까지 더해서 할당
+    }
+
+    if(asize <= oldsize){
+    // 사용자가 요청한 전체 사이즈가 현재 전체 사이즈보다 작으면
+        return ptr;
+        // 현재 포인터 리턴
+    }
+
+    size_t next_alloc = GET_ALLOC(HDRP(NEXT_BLKP(ptr)));
+    // 다음 블록 할당 메타데이터
+    size_t next_size = GET_SIZE(HDRP(NEXT_BLKP(ptr)));
+    // 다음 블록 사이즈 메타데이터
+
+    if(!next_alloc && (oldsize + next_size) >= asize){
+        // 만약 다음 블럭이 free이고
+        // 현재 블럭 크기 + 다음 블럭 크기 합친 게 요청한 크기 이상이면
+        PUT(HDRP(ptr), PACK(oldsize + next_size , 1));
+        //현재 블럭 헤더값에 (현재 전체사이즈+ 사용자가 요청한 전체 사이즈) 할당
+        PUT(FTRP(ptr), PACK(oldsize + next_size , 1));
+        // 현재 블럭 풋터 값에 (현재 전체사이즈+ 사용자가 요청한 전체 사이즈) 할당
+        return ptr;
+        //현재 블럭 포인터 값 리턴
+    }
 
     newptr = mm_malloc(size);
-    if (newptr == NULL)
+    //할당된 블럭을 newptr
+    if(newptr == NULL){
+        // 블럭이 NULL이라면 
         return NULL;
-    copySize = *(size_t *)((char *)oldptr - SIZE_T_SIZE);
-    if (size < copySize)
+        //NULL 반환
+    }
+    copySize = oldsize;
+    // 기존 블록 사이즈 복사
+    if(size < copySize){
+        // 사용자가 요청한 사이즈가 기존 블록 사이즈보다 작으면
         copySize = size;
-    memcpy(newptr, oldptr, copySize);
-    mm_free(oldptr);
+        // 사용자가 요청한 사이즈는 카피 사이즈
+    }
+    memcpy(newptr, ptr, copySize);
+    mm_free(ptr);
     return newptr;
 }
