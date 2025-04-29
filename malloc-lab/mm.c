@@ -83,7 +83,6 @@ team_t team = {
 int mm_init(void)
 // 힙영역 만들기
 {
-    last_fit = heap_listp;
     if ((heap_listp = mem_sbrk(4*WSIZE)) == (void *)-1){
     // 만약 heap_listp가 실패한다면
         return -1;
@@ -99,11 +98,16 @@ int mm_init(void)
     // 힙리스트 12바이트 떨어진곳에 할당된 더미블럭을 만든다.(에필로그 블럭)
     heap_listp += (2*WSIZE);
     //heap_listp 포인터는 초기 더미 페이로드 주소를 가리킨다
+    last_fit = heap_listp;
+    //heap의 초기 포인터를 last_fit으로 초기화
 
     if(extend_heap(CHUNKSIZE/WSIZE) == NULL){
         return -1;
     }
     // 힙영역을 확장에 실패하면 리턴 1
+    if(extend_heap(2) == NULL){
+        return -1;
+    }
     return 0;
 }
 
@@ -124,9 +128,12 @@ static void *extend_heap(size_t words){
     //bp 블록에 free로 풋터저장
     PUT(HDRP(NEXT_BLKP(bp)), PACK(0 , 1));
     //만들어진 free 블럭 뒤에 새로운 에필로그 헤더를 만듬
+    bp = coalesce(bp);
+    //bp는 병합된 블록 처음 포인터위치
+    last_fit = bp;
+    //last_fit은 bp
+    return bp;
 
-    return coalesce(bp);
-    //주변의 free 블록들과 병합한 후 최종 포인터를 리턴
 }
 /*
  * mm_free - Freeing a block does nothing.
@@ -144,7 +151,7 @@ void mm_free(void *ptr){
 }
 
 static void *coalesce(void *bp){
-    size_t prev_alloc = GET_ALLOC(FTRP(PREV_BLKP(bp)));
+    size_t prev_alloc = GET_ALLOC(HDRP(PREV_BLKP(bp)));
     // 현재 블록의 바로 앞 블록이 할당되어있는지 확인함
     size_t next_alloc = GET_ALLOC(HDRP(NEXT_BLKP(bp)));
     // 현재 블록의 바로 뒤 블록이 할당되어있는지 확인함
@@ -182,6 +189,9 @@ static void *coalesce(void *bp){
         bp= PREV_BLKP(bp);
         // bp 포인터를 앞쪽 블럭으로 이동
     }
+    last_fit = heap_listp;
+    // free 블록을 병합한 뒤, 탐색 시작 포인터(last_fit)를 힙 처음으로 초기화
+    
     return bp;
 }
 
@@ -253,20 +263,27 @@ static void place(void *bp, size_t asize){
         // (풋터에 저장)
     }
 }
-static void *find_fit(size_t asize){
-    //요청 사이즈에 맞는 블럭을 찾는 함수
-    void *bp;
+static void *find_fit(size_t asize) {
+    void *bp = last_fit;
+    // 블록 포인터는 last_fit
 
-    for(bp = heap_listp; GET_SIZE(HDRP(bp)) > 0; bp= NEXT_BLKP(bp)){
-        // 힙리스트 처음부터 크기가 0인 에필로그 블록을 만날때까지 다음 블록으로 이동
-        if(!GET_ALLOC(HDRP(bp)) && (asize <= GET_SIZE(HDRP(bp)))){
-        // 만약 블록이 free이거나 요청 사이즈가 현재 블록 사이즈보다 같거나 작으면
+    // Step 1: last_fit부터 힙 끝까지 탐색
+    for (; GET_SIZE(HDRP(bp)) > 0; bp = NEXT_BLKP(bp)) {
+        if (!GET_ALLOC(HDRP(bp)) && (asize <= GET_SIZE(HDRP(bp)))) {
+            last_fit = bp; // 찾았으면 last_fit 갱신
             return bp;
-            //현재 포인터 반환
         }
     }
-    return NULL;
-    //맞는 공간을 못찾으면 리턴 NULL
+
+    // Step 2: heap_listp부터 last_fit까지 다시 탐색
+    for (bp = heap_listp; bp != last_fit; bp = NEXT_BLKP(bp)) {
+        if (!GET_ALLOC(HDRP(bp)) && (asize <= GET_SIZE(HDRP(bp)))) {
+            last_fit = bp; // 찾았으면 last_fit 갱신
+            return bp;
+        }
+    }
+
+    return NULL; // 못 찾으면 NULL
 }
 
 void *mm_realloc(void *ptr, size_t size){
